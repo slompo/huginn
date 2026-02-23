@@ -1,0 +1,60 @@
+[package]
+name = "huginn"
+version = "0.1.0"
+edition = "2021"
+description = "A cognitive terminal multiplexer - your AI copilot for the command line"
+license = "MIT"
+authors = ["Huginn Contributors"]
+readme = "README.md"
+repository = "https://github.com/user/huginn"
+keywords = ["terminal", "tui", "multiplexer", "ai", "cli"]
+categories = ["command-line-interface", "development-tools"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# TUI framework
+ratatui = "0.29"
+
+# Terminal backend
+crossterm = { version = "0.28", features = ["event-stream"] }
+
+# Text input widget
+tui-input = { version = "0.14", features = ["ratatui"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# XDG config paths
+directories = "6.0"
+
+# Command parsing
+shlex = "1.3"
+
+# PTY (pseudoterminal) support
+portable-pty = "0.8"
+
+# VT100/ANSI parsing
+vt100 = "0.15"
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Async utilities
+futures = "0.3"
+
+# Channel for PTY communication
+crossbeam-channel = "0.5"
+
+# Clipboard support
+arboard = "3.4"
+
+[profile.release]
+opt-level = "z"      # Optimize for size
+lto = true           # Link-time optimization
+codegen-units = 1    # Better optimization
+panic = "abort"      # Smaller binary
+strip = true         # Strip symbols
