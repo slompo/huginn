@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(rustc:*)",
+      "Bash(cargo:*)",
+      "Bash(curl:*)",
+      "Bash(sh:*)",
+      "Bash(source:*)",
+      "Bash(echo:*)",
+      "Bash(export PATH=\"$HOME/.cargo/bin:$PATH\")",
+      "Bash(/Users/slompo/.cargo/bin/cargo build:*)",
+      "Bash(make:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}
