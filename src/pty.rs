@@ -81,6 +81,11 @@ impl PtyManager {
         });
         cmd.cwd(working_dir);
 
+        // Set UTF-8 locale for proper character encoding
+        cmd.env("LANG", "en_US.UTF-8");
+        cmd.env("LC_ALL", "en_US.UTF-8");
+        cmd.env("TERM", "xterm-256color");
+
         let _child = pair.slave.spawn_command(cmd).map_err(|e| {
             TerminalError::PtyError(format!("Failed to spawn shell: {}", e))
         })?;

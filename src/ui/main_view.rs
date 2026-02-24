@@ -1,6 +1,6 @@
 //! Main view rendering - renders PTY output or welcome screen
 
-use crate::app::AppState;
+use crate::app::{AppState, Selection};
 use crate::ui::mascot::{MASCOT, WELCOME_MSG};
 use ratatui::{
     layout::{Alignment, Rect},
@@ -22,8 +22,10 @@ pub fn render(
 ) {
     let view_name = app.active_view.name();
 
-    // Add scroll indicator to title if scrolled
-    let title = if is_scrolled {
+    // Add visual mode indicator
+    let title = if app.visual_mode {
+        format!(" {} [VISUAL] ", view_name)
+    } else if is_scrolled {
         format!(" {} [↑ {} lines] ", view_name, scroll_offset)
     } else {
         format!(" {} ", view_name)
@@ -32,7 +34,9 @@ pub fn render(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(if is_scrolled {
+        .border_style(if app.visual_mode {
+            Style::default().fg(Color::Yellow)
+        } else if is_scrolled {
             Style::default().fg(Color::Cyan)
         } else {
             Style::default().fg(Color::DarkGray)
@@ -43,12 +47,12 @@ pub fn render(
 
     // If scrolled, show scrollback at top + current screen at bottom
     if is_scrolled && !app.scrollback_lines.is_empty() {
-        render_with_scrollback(frame, screen, &app.scrollback_lines, inner);
+        render_with_scrollback(frame, screen, &app.scrollback_lines, inner, &app.selection);
         return;
     }
 
     if let Some(screen) = screen {
-        render_screen(frame, screen, inner);
+        render_screen(frame, screen, inner, &app.selection);
     } else {
         let full_text = format!("{}\n{}", MASCOT, WELCOME_MSG);
         let text = Text::styled(full_text, Style::default().fg(Color::Cyan));
@@ -63,6 +67,7 @@ fn render_with_scrollback(
     screen: Option<&Screen>,
     scrollback_lines: &[String],
     area: Rect,
+    selection: &Selection,
 ) {
     let display_rows = area.height as usize;
     let display_cols = area.width as usize;
@@ -138,7 +143,7 @@ fn render_with_scrollback(
 }
 
 /// Render the VT100 screen content
-fn render_screen(frame: &mut Frame, screen: &Screen, area: Rect) {
+fn render_screen(frame: &mut Frame, screen: &Screen, area: Rect, selection: &Selection) {
     let (screen_rows, screen_cols) = screen.size();
     let screen_rows = screen_rows as usize;
     let screen_cols = screen_cols as usize;
@@ -146,12 +151,18 @@ fn render_screen(frame: &mut Frame, screen: &Screen, area: Rect) {
     let display_rows = area.height as usize;
     let display_cols = area.width as usize;
 
+    // Get selection bounds for highlighting
+    let selection_bounds = selection.get_selection_bounds();
+
     let mut lines = Vec::new();
 
     for row in 0..screen_rows.min(display_rows) {
         let mut spans = Vec::new();
 
         for col in 0..screen_cols.min(display_cols) {
+            // Check if this cell is in the selection
+            let is_selected = is_cell_selected(row, col, &selection_bounds);
+
             if let Some(cell) = screen.cell(row as u16, col as u16) {
                 let ch = cell.contents().to_string();
                 let fg = ansi_to_ratatui_color(cell.fgcolor());
@@ -171,13 +182,26 @@ fn render_screen(frame: &mut Frame, screen: &Screen, area: Rect) {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
 
+                // Highlight selected cells
+                if is_selected {
+                    style = Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD);
+                }
+
                 let span = ratatui::text::Span::styled(
                     if ch.is_empty() { " ".to_string() } else { ch },
                     style,
                 );
                 spans.push(span);
             } else {
-                spans.push(ratatui::text::Span::raw(" "));
+                let style = if is_selected {
+                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+                spans.push(ratatui::text::Span::styled(" ", style));
             }
         }
 
@@ -190,6 +214,41 @@ fn render_screen(frame: &mut Frame, screen: &Screen, area: Rect) {
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, area);
+}
+
+/// Check if a cell (row, col) is within the selection bounds
+fn is_cell_selected(
+    row: usize,
+    col: usize,
+    selection_bounds: &Option<((usize, usize), (usize, usize))>,
+) -> bool {
+    if let Some((start, end)) = selection_bounds {
+        let (start_row, start_col) = *start;
+        let (end_row, end_col) = *end;
+
+        if row < start_row || row > end_row {
+            return false;
+        }
+
+        if row == start_row && row == end_row {
+            // Single line selection
+            return col >= start_col && col <= end_col;
+        }
+
+        if row == start_row {
+            // First line of multi-line selection
+            return col >= start_col;
+        }
+
+        if row == end_row {
+            // Last line of multi-line selection
+            return col <= end_col;
+        }
+
+        // Middle line of multi-line selection
+        return true;
+    }
+    false
 }
 
 /// Convert ANSI color to ratatui color
