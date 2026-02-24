@@ -22,10 +22,8 @@ pub fn render(
 ) {
     let view_name = app.active_view.name();
 
-    // Add visual mode indicator
-    let title = if app.visual_mode {
-        format!(" {} [VISUAL] ", view_name)
-    } else if is_scrolled {
+    // Add scroll indicator to title
+    let title = if is_scrolled {
         format!(" {} [↑ {} lines] ", view_name, scroll_offset)
     } else {
         format!(" {} ", view_name)
@@ -34,9 +32,7 @@ pub fn render(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(if app.visual_mode {
-            Style::default().fg(Color::Yellow)
-        } else if is_scrolled {
+        .border_style(if is_scrolled {
             Style::default().fg(Color::Cyan)
         } else {
             Style::default().fg(Color::DarkGray)

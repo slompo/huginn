@@ -163,46 +163,38 @@ async fn main() -> Result<()> {
                         Event::Mouse(mouse) => {
                             use crossterm::event::MouseEventKind;
 
-                            // In visual mode, handle selection
-                            if app.visual_mode {
-                                // Calculate row relative to main view area (accounting for HUD)
-                                let hud_height = 3u16;
-                                let row = mouse.row.saturating_sub(hud_height) as usize;
-                                let col = mouse.column as usize;
+                            // Calculate row relative to main view area (accounting for HUD)
+                            let hud_height = 3u16;
+                            let row = mouse.row.saturating_sub(hud_height) as usize;
+                            let col = mouse.column as usize;
 
-                                match mouse.kind {
-                                    MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-                                        app.start_selection(row, col);
+                            // Handle mouse selection (works in any mode)
+                            match mouse.kind {
+                                MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                                    // Start selection
+                                    app.start_selection(row, col);
+                                    // Exit visual mode if active, we're using direct selection now
+                                    if app.visual_mode {
+                                        app.visual_mode = false;
                                     }
-                                    MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
-                                        app.update_selection(row, col);
-                                        // Update selection text from screen
-                                        let screen = sessions.active_screen();
-                                        let text = extract_selection_text(screen, &app.selection);
-                                        app.set_selection_text(text);
-                                    }
-                                    MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
-                                        // Selection complete, keep visual mode active
-                                    }
-                                    MouseEventKind::ScrollUp => {
-                                        sessions.scroll_up(1);
-                                    }
-                                    MouseEventKind::ScrollDown => {
-                                        sessions.scroll_down(1);
-                                    }
-                                    _ => {}
                                 }
-                            } else {
-                                // Normal mode - handle scroll
-                                match mouse.kind {
-                                    MouseEventKind::ScrollUp => {
-                                        sessions.scroll_up(3);
-                                    }
-                                    MouseEventKind::ScrollDown => {
-                                        sessions.scroll_down(3);
-                                    }
-                                    _ => {}
+                                MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
+                                    app.update_selection(row, col);
+                                    // Update selection text from screen
+                                    let screen = sessions.active_screen();
+                                    let text = extract_selection_text(screen, &app.selection);
+                                    app.set_selection_text(text);
                                 }
+                                MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                                    // Selection complete
+                                }
+                                MouseEventKind::ScrollUp => {
+                                    sessions.scroll_up(3);
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    sessions.scroll_down(3);
+                                }
+                                _ => {}
                             }
                         }
                         Event::Paste(text) => {
@@ -259,6 +251,7 @@ fn handle_key_event(
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 app.copy_selection();
+                app.selection.clear();
                 app.exit_visual_mode();
                 return KeyEventResult::None;
             }
@@ -267,10 +260,26 @@ fn handle_key_event(
                 return KeyEventResult::None;
             }
             KeyCode::Esc => {
+                app.selection.clear();
                 app.exit_visual_mode();
                 return KeyEventResult::None;
             }
             _ => return KeyEventResult::None,
+        }
+    }
+
+    // Handle Cmd+C / Ctrl+C to copy selection (works at any time)
+    if let KeyCode::Char('c') | KeyCode::Char('C') = key.code {
+        if key.modifiers.contains(crossterm::event::KeyModifiers::SUPER)
+            || key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+        {
+            // If there's a selection, copy it
+            if app.selection.is_active() {
+                app.copy_selection();
+                app.selection.clear();
+                return KeyEventResult::None;
+            }
+            // Otherwise, let Ctrl+C pass through to the terminal
         }
     }
 
