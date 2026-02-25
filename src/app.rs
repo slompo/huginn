@@ -110,11 +110,20 @@ pub struct AppState {
     /// Scrollback content for rendering when scrolled
     pub scrollback_lines: Vec<String>,
 
-    /// Visual/selection mode active
-    pub visual_mode: bool,
-
     /// Current text selection
     pub selection: Selection,
+
+    /// First prompt sent to AI assistant (for HUD session name)
+    pub ai_first_prompt: Option<String>,
+
+    /// TL;DR of first AI prompt (truncated for display)
+    pub ai_first_prompt_tldr: String,
+
+    /// Current AI execution progress (for HUD status)
+    pub ai_progress: String,
+
+    /// Flag indicating AI session has received first input
+    pub ai_session_started: bool,
 }
 
 impl AppState {
@@ -161,8 +170,11 @@ impl AppState {
             scroll_offset: 0,
             is_scrolled: false,
             scrollback_lines: Vec::new(),
-            visual_mode: false,
             selection: Selection::default(),
+            ai_first_prompt: None,
+            ai_first_prompt_tldr: String::new(),
+            ai_progress: "Idle".to_string(),
+            ai_session_started: false,
         }
     }
 
@@ -297,29 +309,6 @@ impl AppState {
         }
     }
 
-    /// Enter visual/selection mode
-    pub fn enter_visual_mode(&mut self) {
-        self.visual_mode = true;
-        self.selection.clear();
-        self.hud_status = "-- VISUAL -- (drag to select, y to copy, Esc to exit)".to_string();
-    }
-
-    /// Exit visual/selection mode
-    pub fn exit_visual_mode(&mut self) {
-        self.visual_mode = false;
-        self.selection.clear();
-        self.hud_status = "Ready".to_string();
-    }
-
-    /// Toggle visual mode
-    pub fn toggle_visual_mode(&mut self) {
-        if self.visual_mode {
-            self.exit_visual_mode();
-        } else {
-            self.enter_visual_mode();
-        }
-    }
-
     /// Start selection at position
     pub fn start_selection(&mut self, row: usize, col: usize) {
         self.selection.set_start(row, col);
@@ -328,19 +317,6 @@ impl AppState {
     /// Update selection end position
     pub fn update_selection(&mut self, row: usize, col: usize) {
         self.selection.set_end(row, col);
-    }
-
-    /// Get selection bounds (normalized: start <= end)
-    pub fn get_selection_bounds(&self) -> Option<((usize, usize), (usize, usize))> {
-        let start = self.selection.start?;
-        let end = self.selection.end?;
-
-        // Normalize so start <= end
-        if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
-            Some((start, end))
-        } else {
-            Some((end, start))
-        }
     }
 
     /// Copy selection to clipboard
@@ -374,5 +350,19 @@ impl AppState {
     /// Set the selected text
     pub fn set_selection_text(&mut self, text: String) {
         self.selection.text = text;
+    }
+
+    /// Set the first AI prompt and generate its TL;DR
+    pub fn set_first_ai_prompt(&mut self, prompt: &str) {
+        if self.ai_first_prompt.is_none() {
+            self.ai_first_prompt = Some(prompt.to_string());
+            self.ai_first_prompt_tldr = crate::ai_context::generate_simple_tldr(prompt);
+            self.ai_session_started = true;
+        }
+    }
+
+    /// Update AI progress from screen analysis
+    pub fn update_ai_progress(&mut self, progress: &str) {
+        self.ai_progress = progress.to_string();
     }
 }

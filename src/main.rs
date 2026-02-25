@@ -3,6 +3,7 @@
 //! Huginn is your "thought raven" - a micro-terminal multiplexer that wraps
 //! your shell and AI assistants, showing a dynamic TL;DR in a HUD at the top.
 
+mod ai_context;
 mod app;
 mod config;
 mod error;
@@ -44,7 +45,7 @@ async fn main() -> Result<()> {
     let (total_cols, total_rows) =
         crossterm::terminal::size().unwrap_or((80, 24));
     let pty_cols = total_cols;
-    let pty_rows = total_rows.saturating_sub(4); // 3 for HUD + 1 for footer
+    let pty_rows = total_rows.saturating_sub(6); // 3 HUD + 1 footer + 2 main view borders
 
     // Get current working directory to pass to PTY sessions
     let cwd = env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -93,7 +94,7 @@ async fn main() -> Result<()> {
         // Get scrollback content if scrolled
         if app.is_scrolled {
             if let Ok((_cols, rows)) = crossterm::terminal::size() {
-                let main_rows = rows.saturating_sub(4) as usize;
+                let main_rows = rows.saturating_sub(6) as usize;
                 let (scrollback, _count) = sessions.get_scrollback(main_rows);
                 app.scrollback_lines = scrollback;
             }
@@ -101,14 +102,33 @@ async fn main() -> Result<()> {
             app.scrollback_lines.clear();
         }
 
+        // AI Context tracking
+        // 1. Check for first prompt capture in AI session
+        if !app.ai_session_started {
+            if let Some(prompt) = sessions.get_ai_first_prompt() {
+                app.set_first_ai_prompt(prompt);
+            }
+        }
+
+        // 2. Update AI progress based on screen content
+        let screen_content = sessions.get_ai_screen_content();
+        // Use simple detection as fallback
+        let (_, simple_progress) = ai_context::detect_ai_progress(&screen_content);
+
         // Check for summarizer responses
         if let Some(ref summarizer_arc) = summarizer {
             if let Ok(summarizer) = summarizer_arc.try_lock() {
                 if let Some(response) = summarizer.try_get_response() {
                     if response.success {
-                        app.hud_status = response.summary;
+                        // Update AI progress if session is active, otherwise hud_status
+                        if app.ai_session_started {
+                            app.update_ai_progress(&response.summary);
+                        } else {
+                            app.hud_status = response.summary;
+                        }
                     } else {
-                        // Don't show error, keep previous status
+                        // On error, use simple detection
+                        app.update_ai_progress(&simple_progress);
                     }
                     app.is_summarizing = false;
                 }
@@ -124,11 +144,20 @@ async fn main() -> Result<()> {
                 if let Ok(summarizer) = summarizer_arc.try_lock() {
                     let content = extract_screen_text(sessions.active_screen());
                     if !content.trim().is_empty() {
-                        let view_context = app.active_view.name().to_string();
+                        // Use "AI" context when AI session is active for better TL;DR
+                        let view_context = if app.ai_session_started {
+                            "AI".to_string()
+                        } else {
+                            app.active_view.name().to_string()
+                        };
                         if summarizer.request_summary(content, view_context) {
                             app.is_summarizing = true;
                             if force_refresh {
-                                app.hud_status = "Summarizing...".to_string();
+                                if app.ai_session_started {
+                                    app.update_ai_progress("Summarizing...");
+                                } else {
+                                    app.hud_status = "Summarizing...".to_string();
+                                }
                             }
                         }
                     }
@@ -163,20 +192,22 @@ async fn main() -> Result<()> {
                         Event::Mouse(mouse) => {
                             use crossterm::event::MouseEventKind;
 
-                            // Calculate row relative to main view area (accounting for HUD)
-                            let hud_height = 3u16;
-                            let row = mouse.row.saturating_sub(hud_height) as usize;
-                            let col = mouse.column as usize;
+                            // Calculate row relative to main view area (accounting for HUD + border)
+                            // HUD: 3 lines, Main view border: 1 line (top border)
+                            let offset_y = 4u16; // 3 (HUD) + 1 (main view top border)
+                            let row = mouse.row.saturating_sub(offset_y) as usize;
+                            // Column offset: 1 for the left border of main view
+                            let col = mouse.column.saturating_sub(1) as usize;
 
                             // Handle mouse selection (works in any mode)
                             match mouse.kind {
                                 MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                                     // Start selection
                                     app.start_selection(row, col);
-                                    // Exit visual mode if active, we're using direct selection now
-                                    if app.visual_mode {
-                                        app.visual_mode = false;
-                                    }
+                                    // Set initial selection text (single cell)
+                                    let screen = sessions.active_screen();
+                                    let text = extract_selection_text(screen, &app.selection);
+                                    app.set_selection_text(text);
                                 }
                                 MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
                                     app.update_selection(row, col);
@@ -186,7 +217,16 @@ async fn main() -> Result<()> {
                                     app.set_selection_text(text);
                                 }
                                 MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
-                                    // Selection complete
+                                    // Selection complete - copy automatically
+                                    let screen = sessions.active_screen();
+                                    let text = extract_selection_text(screen, &app.selection);
+                                    let len = text.len();
+                                    app.set_selection_text(text);
+                                    // Auto-copy on mouse release
+                                    if len > 0 {
+                                        app.copy_selection();
+                                        app.selection.clear();
+                                    }
                                 }
                                 MouseEventKind::ScrollUp => {
                                     sessions.scroll_up(3);
@@ -198,15 +238,15 @@ async fn main() -> Result<()> {
                             }
                         }
                         Event::Paste(text) => {
-                            // Handle paste - send to active PTY
+                            // Handle paste - send to active PTY with bracketed paste mode
                             if app.active_view == app::ActiveView::Shell
                                 || app.active_view == app::ActiveView::Ai {
-                                let _ = sessions.send_to_active(&text);
+                                let _ = sessions.paste_to_active(&text);
                             }
                         }
                         Event::Resize(cols, rows) => {
                             // Resize all PTYs
-                            let pty_rows = rows.saturating_sub(4);
+                            let pty_rows = rows.saturating_sub(6);
                             sessions.resize_all(cols, pty_rows);
                         }
                         _ => {}
@@ -246,46 +286,30 @@ fn handle_key_event(
     key: KeyEvent,
     sessions: &mut SessionManager,
 ) -> KeyEventResult {
-    // Handle visual mode
-    if app.visual_mode {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                app.copy_selection();
-                app.selection.clear();
-                app.exit_visual_mode();
-                return KeyEventResult::None;
-            }
-            KeyCode::Char('v') | KeyCode::Char('V') => {
-                app.exit_visual_mode();
-                return KeyEventResult::None;
-            }
-            KeyCode::Esc => {
-                app.selection.clear();
-                app.exit_visual_mode();
-                return KeyEventResult::None;
-            }
-            _ => return KeyEventResult::None,
-        }
-    }
-
-    // Handle Cmd+C / Ctrl+C to copy selection (works at any time)
+    // Ctrl+C sends SIGINT to terminal (pass through)
+    // Note: Cmd+C is intercepted by Terminal.app and never reaches huginn
+    // Copy is done automatically on mouse release instead
     if let KeyCode::Char('c') | KeyCode::Char('C') = key.code {
-        if key.modifiers.contains(crossterm::event::KeyModifiers::SUPER)
-            || key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-        {
-            // If there's a selection, copy it
-            if app.selection.is_active() {
-                app.copy_selection();
-                app.selection.clear();
-                return KeyEventResult::None;
-            }
-            // Otherwise, let Ctrl+C pass through to the terminal
+        let has_ctrl = key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
+        let has_shift = key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
+        let has_super = key.modifiers.contains(crossterm::event::KeyModifiers::SUPER);
+
+        // Ctrl+C without Shift/Super passes through to terminal (SIGINT)
+        if has_ctrl && !has_shift && !has_super {
+            // Let Ctrl+C pass through to send_key_to_session
         }
+        // All other 'c' keys pass through normally
     }
 
     // Handle command mode
     if app.command_mode {
         if let KeyCode::Char(c) = key.code {
+            // If ":" pressed again, send ":" to terminal and exit command mode
+            if c == ':' {
+                app.exit_command_mode();
+                let _ = sessions.send_to(app.active_view, b":");
+                return KeyEventResult::None;
+            }
             app.handle_command(c);
             // Check if 'r' was pressed for refresh
             if c == 'r' || c == 'R' {
@@ -302,14 +326,6 @@ fn handle_key_event(
         if let KeyCode::Char(':') = key.code {
             app.enter_command_mode();
             return KeyEventResult::None;
-        }
-
-        // 'v' to enter visual mode
-        if let KeyCode::Char('v') | KeyCode::Char('V') = key.code {
-            if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                app.enter_visual_mode();
-                return KeyEventResult::None;
-            }
         }
 
         // Handle scrollback navigation in Shell or AI view
@@ -408,7 +424,7 @@ fn send_key_to_session(key: KeyEvent, view: app::ActiveView, sessions: &mut Sess
         KeyCode::Char(c) => {
             // Handle modifiers
             if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                // Ctrl+key sends control character
+                // Ctrl+key sends control character (only for ASCII a-z)
                 let c = c.to_ascii_lowercase();
                 if c >= 'a' && c <= 'z' {
                     let ctrl_char = (c as u8) - ('a' as u8) + 1;
@@ -418,13 +434,23 @@ fn send_key_to_session(key: KeyEvent, view: app::ActiveView, sessions: &mut Sess
                 } else if c == 'm' {
                     vec![13] // Enter
                 } else {
-                    vec![c as u8]
+                    // For non-ASCII chars with Ctrl, just encode as UTF-8
+                    let mut buf = [0u8; 4];
+                    let s = c.encode_utf8(&mut buf);
+                    s.as_bytes().to_vec()
                 }
             } else if key.modifiers.contains(crossterm::event::KeyModifiers::ALT) {
-                // Alt+key sends ESC followed by the key
-                vec![27, c as u8]
+                // Alt+key sends ESC followed by the UTF-8 encoded key
+                let mut buf = [0u8; 4];
+                let s = c.encode_utf8(&mut buf);
+                let mut result = vec![27]; // ESC
+                result.extend_from_slice(s.as_bytes());
+                result
             } else {
-                vec![c as u8]
+                // Regular character - encode as UTF-8
+                let mut buf = [0u8; 4];
+                let s = c.encode_utf8(&mut buf);
+                s.as_bytes().to_vec()
             }
         }
         KeyCode::Enter => vec![13],       // CR
@@ -520,7 +546,7 @@ fn handle_text_input(app: &mut AppState, key: KeyEvent) {
 }
 
 /// Extract selected text from the screen based on selection bounds
-fn extract_selection_text(screen: &vt100::Screen, selection: &crate::app::Selection) -> String {
+fn extract_selection_text(screen: &vt100_ctt::Screen, selection: &crate::app::Selection) -> String {
     let bounds = match selection.get_selection_bounds() {
         Some(b) => b,
         None => return String::new(),
@@ -530,8 +556,7 @@ fn extract_selection_text(screen: &vt100::Screen, selection: &crate::app::Select
     let (start_row, start_col): (usize, usize) = start;
     let (end_row, end_col): (usize, usize) = end;
 
-    let (screen_rows, screen_cols) = screen.size();
-    let screen_rows = screen_rows as usize;
+    let (_, screen_cols) = screen.size();
     let screen_cols = screen_cols as usize;
 
     let mut text = String::new();

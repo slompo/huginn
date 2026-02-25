@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender, bounded};
-use vt100::Screen;
+use vt100_ctt::Screen;
 
 /// Request for summarization
 pub struct SummarizeRequest {
@@ -146,9 +146,27 @@ impl Summarizer {
             content.to_string()
         };
 
-        // Create the prompt
-        let prompt = format!(
-            r#"You are a terminal context analyzer. Given the following terminal output from a {} session, provide a very brief (1-2 sentences max) summary of what's happening. Focus on:
+        // Create the prompt - different for AI assistant vs shell
+        let prompt = if view_context.contains("AI") || view_context.contains("Claude") {
+            format!(
+                r#"You are analyzing an AI assistant session. Given the terminal output, provide a VERY brief TL;DR (max 8 words) of what the AI is currently doing.
+
+Focus on:
+- The main action being performed (editing, reading, running, etc.)
+- The target file or component if visible
+- The goal of the current operation
+
+Terminal output:
+```
+{}
+```
+
+Provide ONLY the brief TL;DR (e.g., "Fixing HUD status bug in ai_context.rs" or "Implementing copy feature for mouse selection"):"#,
+                truncated
+            )
+        } else {
+            format!(
+                r#"You are a terminal context analyzer. Given the following terminal output from a {} session, provide a very brief (1-2 sentences max) summary of what's happening. Focus on:
 - Current task or command being executed
 - Any errors or warnings
 - Current directory or project context if visible
@@ -159,9 +177,10 @@ Terminal output:
 ```
 
 Provide only the brief summary, no other text:"#,
-            view_context,
-            truncated
-        );
+                view_context,
+                truncated
+            )
+        };
 
         // Run the LLM command
         let mut child = Command::new(command)

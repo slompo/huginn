@@ -13,13 +13,7 @@ use ratatui::{
 pub fn render(frame: &mut Frame, app: &AppState, area: Rect) {
     let shortcuts = match app.active_view {
         ActiveView::Shell | ActiveView::Ai => {
-            if app.visual_mode {
-                vec![
-                    ("drag", "Select"),
-                    ("y", "Copy"),
-                    ("Esc", "Exit"),
-                ]
-            } else if app.command_mode {
+            if app.command_mode {
                 vec![
                     ("t", "Toggle"),
                     ("c", "Config"),
@@ -29,7 +23,6 @@ pub fn render(frame: &mut Frame, app: &AppState, area: Rect) {
             } else {
                 vec![
                     (":", "Cmd"),
-                    ("v", "Visual"),
                     ("scroll", "Mouse"),
                 ]
             }
@@ -42,12 +35,6 @@ pub fn render(frame: &mut Frame, app: &AppState, area: Rect) {
         ],
     };
 
-    let color = if app.visual_mode {
-        Color::Yellow
-    } else {
-        Color::Cyan
-    };
-
     let spans: Vec<Span> = shortcuts
         .iter()
         .flat_map(|(key, action)| {
@@ -55,7 +42,7 @@ pub fn render(frame: &mut Frame, app: &AppState, area: Rect) {
                 Span::styled(
                     format!(" [{}]", key),
                     Style::default()
-                        .fg(color)
+                        .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
