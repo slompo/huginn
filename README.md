@@ -2,7 +2,13 @@
 
 A cognitive terminal multiplexer written in Rust. Wraps your shell and AI assistants with a dynamic HUD to prevent context-switching fatigue.
 
-> In Norse mythology, Odin had two ravens: Muninn (Memory) and Huginn (Thought). Huginn flew around the world and returned to whisper everything it had seen into Odin's ear.
+## The Name
+
+> In Norse mythology, Odin had two ravens: **Huginn** (Old Norse: "Thought") and **Muninn** ("Memory"). Each day at dawn, Odin sent them flying across all nine worlds. At evening, they returned to perch on his shoulders and whisper everything they had seen and heard into his ears.
+
+Huginn represents **Thought** - the active processing and analysis of information. Just as Odin's raven brought him knowledge from across the world, this tool brings context and awareness to your terminal workflow. The HUD acts as Huginn's whispers, keeping you informed without pulling you away from your task.
+
+Muninn (**Memory**) would be the scrollback buffer - preserving the history of what has passed. Together, they give you both the present moment (Thought) and the past (Memory) to make better decisions.
 
 ## Features
 
