@@ -7,7 +7,7 @@ description = "A cognitive terminal multiplexer - your AI copilot for the comman
 license = "MIT"
 authors = ["Huginn Contributors"]
 readme = "README.md"
-repository = "https://github.com/user/huginn"
+repository = "https://github.com/slompo/huginn"
 keywords = ["terminal", "tui", "multiplexer", "ai", "cli"]
 categories = ["command-line-interface", "development-tools"]
 
