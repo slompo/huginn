@@ -19,7 +19,7 @@ use crate::config::Config;
 use crate::error::Result;
 use crate::event::{Action, EventHandler};
 use crate::session::SessionManager;
-use crate::summarizer::{Summarizer, extract_screen_text, is_summarizer_available};
+use crate::summarizer::{Summarizer, extract_screen_text, is_summarizer_available, generate_session_title};
 use crate::terminal::TerminalWrapper;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
 use futures::StreamExt;
@@ -114,6 +114,28 @@ async fn main() -> Result<()> {
         let screen_content = sessions.get_ai_screen_content();
         // Use simple detection as fallback
         let (_, simple_progress) = ai_context::detect_ai_progress(&screen_content);
+
+        // 3. Generate session title on first prompt (after short delay for screen update)
+        if app.generating_title {
+            // Small delay to let the terminal update after Enter
+            app.generating_title = false;
+
+            // Get screen content from shell
+            let shell_screen = sessions.screen_for(app::ActiveView::Shell);
+            let screen_text = extract_screen_text(shell_screen);
+
+            // Try to generate title
+            let title = generate_session_title(
+                &config.summarizer_command,
+                &config.summarizer_args,
+                None, // No user prompt captured yet
+                Some(&screen_text),
+            );
+
+            if let Some(t) = title {
+                app.session_title = Some(t);
+            }
+        }
 
         // Check for summarizer responses
         if let Some(ref summarizer_arc) = summarizer {
@@ -394,6 +416,15 @@ fn handle_key_event(
 
             // Pass all other keys to the active PTY
             send_key_to_session(key, app.active_view, sessions);
+
+            // Detect first Enter in shell to generate session title
+            if key.code == KeyCode::Enter && app.active_view == app::ActiveView::Shell {
+                if !app.first_prompt_processed {
+                    app.generating_title = true;
+                    app.first_prompt_processed = true;
+                }
+            }
+
             return KeyEventResult::None;
         }
     }

@@ -283,3 +283,136 @@ pub fn is_summarizer_available(command: &str) -> bool {
         .status()
         .is_ok()
 }
+
+/// Generate a session title from user prompt or screen content
+/// Returns None if unable to generate
+pub fn generate_session_title(
+    command: &str,
+    args: &[String],
+    user_prompt: Option<&str>,
+    screen_content: Option<&str>,
+) -> Option<String> {
+    // First try with user prompt if available
+    if let Some(prompt) = user_prompt {
+        if !prompt.trim().is_empty() {
+            let title = try_generate_from_prompt(command, args, prompt);
+            if let Some(t) = title {
+                if t != "NEED_SCREEN" {
+                    return Some(t);
+                }
+            }
+        }
+    }
+
+    // Fall back to screen content
+    if let Some(screen) = screen_content {
+        if !screen.trim().is_empty() {
+            return try_generate_from_screen(command, args, screen);
+        }
+    }
+
+    None
+}
+
+/// Try to generate title from user prompt
+fn try_generate_from_prompt(command: &str, args: &[String], prompt: &str) -> Option<String> {
+    let truncated = if prompt.len() > 500 {
+        &prompt[..500]
+    } else {
+        prompt
+    };
+
+    let prompt_text = format!(
+        r#"Given the user's first prompt below, generate a concise session title (5-8 words) in the format: "VERB + OBJECT + CONTEXT".
+
+Examples of good titles:
+- "Fix OAuth2 callback - authentication failing"
+- "Implement dark mode toggle - settings UI"
+- "Debug vt100 crate - build errors on Linux"
+- "Add cargo-dist releases - automated CI/CD"
+
+If you cannot infer a meaningful title from this prompt alone, respond with exactly: NEED_SCREEN
+
+User prompt:
+```
+{}
+```
+
+Session title:"#,
+        truncated
+    );
+
+    run_llm_command(command, args, &prompt_text)
+}
+
+/// Try to generate title from screen content
+fn try_generate_from_screen(command: &str, args: &[String], screen: &str) -> Option<String> {
+    let truncated = if screen.len() > 2000 {
+        &screen[..2000]
+    } else {
+        screen
+    };
+
+    let prompt_text = format!(
+        r#"Analyze the terminal screen content below and infer what the user is working on.
+Generate a concise session title (5-8 words) in the format: "VERB + OBJECT + CONTEXT".
+
+Examples of good titles:
+- "Fixing build errors - Cargo.toml dependencies"
+- "Running tests - authentication module"
+- "Editing configuration - Huginn settings"
+
+Terminal screen:
+```
+{}
+```
+
+Session title:"#,
+        truncated
+    );
+
+    run_llm_command(command, args, &prompt_text)
+}
+
+/// Run LLM command and get response
+fn run_llm_command(command: &str, args: &[String], prompt: &str) -> Option<String> {
+    let mut child = Command::new(command)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(prompt.as_bytes()).ok()?;
+        stdin.flush().ok()?;
+    }
+
+    let mut output = String::new();
+    if let Some(ref mut stdout) = child.stdout {
+        stdout.read_to_string(&mut output).ok()?;
+    }
+
+    let _ = child.wait();
+
+    // Clean up response
+    let title = output
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+
+    // Remove quotes if present
+    let title = title.trim_matches('"').trim_matches('\'').to_string();
+
+    // Truncate if too long
+    if title.len() > 60 {
+        Some(format!("{}...", &title[..57]))
+    } else if title.is_empty() {
+        None
+    } else {
+        Some(title)
+    }
+}

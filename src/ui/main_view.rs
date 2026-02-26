@@ -50,7 +50,14 @@ pub fn render(
     if let Some(screen) = screen {
         render_screen(frame, screen, inner, &app.selection);
     } else {
-        let full_text = format!("{}\n{}", MASCOT, WELCOME_MSG);
+        // Build welcome message with optional session title
+        let mut full_text = format!("{}\n{}", MASCOT, WELCOME_MSG);
+
+        // Add session title if available (for resume context)
+        if let Some(ref title) = app.session_title {
+            full_text = format!("{}\n\n📋 Retomando: {}", full_text, title);
+        }
+
         let text = Text::styled(full_text, Style::default().fg(Color::Cyan));
         let paragraph = Paragraph::new(text).alignment(Alignment::Center);
         frame.render_widget(paragraph, inner);
