@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::error::{Result, TerminalError};
 use crate::pty::PtyManager;
 use std::path::PathBuf;
-use vt100::Screen;
+use vt100_ctt::Screen;
 
 /// Manages multiple PTY sessions
 pub struct SessionManager {
@@ -110,14 +110,34 @@ impl SessionManager {
     pub fn send_to(&mut self, view: ActiveView, bytes: &[u8]) -> Result<()> {
         match view {
             ActiveView::Shell => self.shell.send_bytes(bytes),
-            ActiveView::Ai => self.ai.send_bytes(bytes),
+            ActiveView::Ai => self.ai.send_bytes_tracked(bytes), // Track for first prompt
             ActiveView::Config => Ok(()), // No-op for config view
         }
     }
 
-    /// Send text to the active session
-    pub fn send_to_active(&mut self, text: &str) -> Result<()> {
-        self.send_to(self.active, text.as_bytes())
+    /// Get first prompt from AI session
+    pub fn get_ai_first_prompt(&self) -> Option<&str> {
+        self.ai.get_first_prompt()
+    }
+
+    /// Check if AI session has captured first prompt
+    #[allow(dead_code)]
+    pub fn ai_has_first_prompt(&self) -> bool {
+        self.ai.has_first_prompt()
+    }
+
+    /// Get AI screen content for progress analysis
+    pub fn get_ai_screen_content(&self) -> String {
+        crate::summarizer::extract_screen_text(self.ai.screen())
+    }
+
+    /// Send pasted text to the active session (with bracketed paste mode)
+    pub fn paste_to_active(&mut self, text: &str) -> Result<()> {
+        match self.active {
+            ActiveView::Shell => self.shell.send_paste(text),
+            ActiveView::Ai => self.ai.send_paste(text),
+            ActiveView::Config => Ok(()),
+        }
     }
 
     /// Stop all sessions

@@ -11,7 +11,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     Frame,
 };
-use vt100::Screen;
+use vt100_ctt::Screen;
 
 /// Content to render in the main view
 #[allow(dead_code)]

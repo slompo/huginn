@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
-use vt100::Screen;
+use vt100_ctt::Screen;
 
 /// Render the main view with PTY screen or welcome message
 pub fn render(
@@ -63,7 +63,7 @@ fn render_with_scrollback(
     screen: Option<&Screen>,
     scrollback_lines: &[String],
     area: Rect,
-    selection: &Selection,
+    _selection: &Selection,
 ) {
     let display_rows = area.height as usize;
     let display_cols = area.width as usize;
@@ -94,16 +94,26 @@ fn render_with_scrollback(
 
         for row in start_row..vt_rows {
             let mut spans = Vec::new();
+            let mut col = 0;
 
-            for col in 0..vt_cols.min(display_cols) {
+            while col < vt_cols.min(display_cols) {
                 if let Some(cell) = screen.cell(row as u16, col as u16) {
+                    // Skip wide continuation cells
+                    if cell.is_wide_continuation() {
+                        col += 1;
+                        continue;
+                    }
+
                     let ch = cell.contents().to_string();
-                    let fg = ansi_to_ratatui_color(cell.fgcolor());
-                    let bg = ansi_to_ratatui_color(cell.bgcolor());
+                    let fg = ansi_to_ratatui_fg_color(cell.fgcolor());
+                    let bg = ansi_to_ratatui_bg_color(cell.bgcolor());
                     let mut style = Style::default().fg(fg).bg(bg);
 
                     if cell.bold() {
                         style = style.add_modifier(Modifier::BOLD);
+                    }
+                    if cell.dim() {
+                        style = style.add_modifier(Modifier::DIM);
                     }
                     if cell.italic() {
                         style = style.add_modifier(Modifier::ITALIC);
@@ -115,13 +125,24 @@ fn render_with_scrollback(
                         style = style.add_modifier(Modifier::REVERSED);
                     }
 
-                    let span = ratatui::text::Span::styled(
-                        if ch.is_empty() { " ".to_string() } else { ch },
-                        style,
-                    );
-                    spans.push(span);
+                    let display_ch = if ch.is_empty() { " ".to_string() } else { ch };
+
+                    // For wide characters, add extra space
+                    if cell.is_wide() {
+                        let span = ratatui::text::Span::styled(
+                            format!("{} ", display_ch),
+                            style,
+                        );
+                        spans.push(span);
+                        col += 2;
+                    } else {
+                        let span = ratatui::text::Span::styled(display_ch, style);
+                        spans.push(span);
+                        col += 1;
+                    }
                 } else {
                     spans.push(ratatui::text::Span::raw(" "));
+                    col += 1;
                 }
             }
 
@@ -154,19 +175,29 @@ fn render_screen(frame: &mut Frame, screen: &Screen, area: Rect, selection: &Sel
 
     for row in 0..screen_rows.min(display_rows) {
         let mut spans = Vec::new();
+        let mut col = 0;
 
-        for col in 0..screen_cols.min(display_cols) {
+        while col < screen_cols.min(display_cols) {
             // Check if this cell is in the selection
             let is_selected = is_cell_selected(row, col, &selection_bounds);
 
             if let Some(cell) = screen.cell(row as u16, col as u16) {
+                // Skip wide continuation cells - they're rendered as part of the previous cell
+                if cell.is_wide_continuation() {
+                    col += 1;
+                    continue;
+                }
+
                 let ch = cell.contents().to_string();
-                let fg = ansi_to_ratatui_color(cell.fgcolor());
-                let bg = ansi_to_ratatui_color(cell.bgcolor());
+                let fg = ansi_to_ratatui_fg_color(cell.fgcolor());
+                let bg = ansi_to_ratatui_bg_color(cell.bgcolor());
                 let mut style = Style::default().fg(fg).bg(bg);
 
                 if cell.bold() {
                     style = style.add_modifier(Modifier::BOLD);
+                }
+                if cell.dim() {
+                    style = style.add_modifier(Modifier::DIM);
                 }
                 if cell.italic() {
                     style = style.add_modifier(Modifier::ITALIC);
@@ -186,11 +217,21 @@ fn render_screen(frame: &mut Frame, screen: &Screen, area: Rect, selection: &Sel
                         .add_modifier(Modifier::BOLD);
                 }
 
-                let span = ratatui::text::Span::styled(
-                    if ch.is_empty() { " ".to_string() } else { ch },
-                    style,
-                );
-                spans.push(span);
+                let display_ch = if ch.is_empty() { " ".to_string() } else { ch.clone() };
+
+                // For wide characters, add an extra space to maintain alignment
+                if cell.is_wide() {
+                    let span = ratatui::text::Span::styled(
+                        format!("{} ", display_ch),
+                        style,
+                    );
+                    spans.push(span);
+                    col += 2; // Wide chars take 2 columns
+                } else {
+                    let span = ratatui::text::Span::styled(display_ch, style);
+                    spans.push(span);
+                    col += 1;
+                }
             } else {
                 let style = if is_selected {
                     Style::default().fg(Color::Black).bg(Color::Yellow)
@@ -198,6 +239,7 @@ fn render_screen(frame: &mut Frame, screen: &Screen, area: Rect, selection: &Sel
                     Style::default()
                 };
                 spans.push(ratatui::text::Span::styled(" ", style));
+                col += 1;
             }
         }
 
@@ -247,11 +289,11 @@ fn is_cell_selected(
     false
 }
 
-/// Convert ANSI color to ratatui color
-fn ansi_to_ratatui_color(color: vt100::Color) -> Color {
+/// Convert ANSI color to ratatui color (for foreground)
+fn ansi_to_ratatui_fg_color(color: vt100_ctt::Color) -> Color {
     match color {
-        vt100::Color::Default => Color::Reset,
-        vt100::Color::Idx(i) => match i {
+        vt100_ctt::Color::Default => Color::Gray,  // Visible default fg
+        vt100_ctt::Color::Idx(i) => match i {
             0 => Color::Black,
             1 => Color::Red,
             2 => Color::Green,
@@ -270,6 +312,33 @@ fn ansi_to_ratatui_color(color: vt100::Color) -> Color {
             15 => Color::White,
             _ => Color::Indexed(i),
         },
-        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+        vt100_ctt::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+/// Convert ANSI color to ratatui color (for background)
+fn ansi_to_ratatui_bg_color(color: vt100_ctt::Color) -> Color {
+    match color {
+        vt100_ctt::Color::Default => Color::Reset,  // Transparent bg
+        vt100_ctt::Color::Idx(i) => match i {
+            0 => Color::Black,
+            1 => Color::Red,
+            2 => Color::Green,
+            3 => Color::Yellow,
+            4 => Color::Blue,
+            5 => Color::Magenta,
+            6 => Color::Cyan,
+            7 => Color::Gray,
+            8 => Color::DarkGray,
+            9 => Color::LightRed,
+            10 => Color::LightGreen,
+            11 => Color::LightYellow,
+            12 => Color::LightBlue,
+            13 => Color::LightMagenta,
+            14 => Color::LightCyan,
+            15 => Color::White,
+            _ => Color::Indexed(i),
+        },
+        vt100_ctt::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
     }
 }

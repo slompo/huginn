@@ -3,7 +3,7 @@
 //! Handles spawning and communicating with shell processes.
 
 use crate::error::{Result, TerminalError};
-use portable_pty::{CommandBuilder, PtyPair, PtySize};
+use portable_pty::{ChildKiller, CommandBuilder, PtyPair, PtySize};
 use std::env;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender, bounded};
-use vt100::Parser;
+use vt100_ctt::Parser;
 
 /// Maximum scrollback lines to keep
 const MAX_SCROLLBACK_LINES: usize = 10000;
@@ -35,6 +35,9 @@ pub struct PtyManager {
     /// Flag to signal reader thread to stop
     running: Arc<AtomicBool>,
 
+    /// Child process killer for terminating the shell
+    child_killer: Box<dyn ChildKiller + Send + Sync>,
+
     /// Scrollback buffer - stores rendered lines that scrolled off
     pub scrollback_lines: Vec<String>,
 
@@ -47,6 +50,15 @@ pub struct PtyManager {
 
     /// Previous screen content for comparison
     prev_screen_content: Vec<String>,
+
+    /// Buffer for tracking user input before Enter (for first prompt capture)
+    input_buffer: String,
+
+    /// First prompt captured (for AI sessions)
+    pub first_prompt: Option<String>,
+
+    /// Flag indicating first prompt was captured
+    first_prompt_captured: bool,
 }
 
 impl PtyManager {
@@ -86,9 +98,12 @@ impl PtyManager {
         cmd.env("LC_ALL", "en_US.UTF-8");
         cmd.env("TERM", "xterm-256color");
 
-        let _child = pair.slave.spawn_command(cmd).map_err(|e| {
+        let child = pair.slave.spawn_command(cmd).map_err(|e| {
             TerminalError::PtyError(format!("Failed to spawn shell: {}", e))
         })?;
+
+        // Get the child killer before we lose the reference
+        let child_killer = child.clone_killer();
 
         let writer = pair.master.take_writer().map_err(|e| {
             TerminalError::PtyError(format!("Failed to get PTY writer: {}", e))
@@ -129,11 +144,15 @@ impl PtyManager {
             parser,
             output_rx,
             running,
+            child_killer,
             scrollback_lines: Vec::new(),
             scroll_offset: 0,
             terminal_height: rows,
             terminal_width: cols,
             prev_screen_content: Vec::new(),
+            input_buffer: String::new(),
+            first_prompt: None,
+            first_prompt_captured: false,
         })
     }
 
@@ -291,9 +310,66 @@ impl PtyManager {
         Ok(())
     }
 
+    /// Send pasted text (simple implementation without bracketed paste)
+    pub fn send_paste(&mut self, text: &str) -> Result<()> {
+        self.send_bytes(text.as_bytes())
+    }
+
+    /// Send bytes and track for first prompt capture
+    pub fn send_bytes_tracked(&mut self, bytes: &[u8]) -> Result<()> {
+        // Track input for prompt capture - handle UTF-8 properly
+        // Try to decode as UTF-8 string first
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            for ch in text.chars() {
+                if ch == '\r' || ch == '\n' {
+                    // Enter key - capture prompt
+                    if !self.first_prompt_captured && !self.input_buffer.trim().is_empty() {
+                        self.first_prompt = Some(self.input_buffer.trim().to_string());
+                        self.first_prompt_captured = true;
+                    }
+                    self.input_buffer.clear();
+                } else if ch == '\x08' || ch == '\x7f' {
+                    // Backspace or DEL
+                    self.input_buffer.pop();
+                } else if !ch.is_control() {
+                    // Printable character (including UTF-8)
+                    self.input_buffer.push(ch);
+                }
+            }
+        } else {
+            // Fallback for non-UTF8 bytes (rare)
+            for &b in bytes {
+                if b == 13 {
+                    if !self.first_prompt_captured && !self.input_buffer.trim().is_empty() {
+                        self.first_prompt = Some(self.input_buffer.trim().to_string());
+                        self.first_prompt_captured = true;
+                    }
+                    self.input_buffer.clear();
+                } else if b == 127 || b == 8 {
+                    self.input_buffer.pop();
+                } else if b >= 32 && b < 127 {
+                    self.input_buffer.push(b as char);
+                }
+            }
+        }
+
+        self.send_bytes(bytes)
+    }
+
+    /// Get the captured first prompt
+    pub fn get_first_prompt(&self) -> Option<&str> {
+        self.first_prompt.as_deref()
+    }
+
+    /// Check if first prompt was captured
+    #[allow(dead_code)]
+    pub fn has_first_prompt(&self) -> bool {
+        self.first_prompt_captured
+    }
+
     /// Resize the terminal
     pub fn resize(&mut self, cols: u16, rows: u16) {
-        self.parser.set_size(rows, cols);
+        self.parser.screen_mut().set_size(rows, cols);
         self.terminal_height = rows;
         self.terminal_width = cols;
 
@@ -305,7 +381,7 @@ impl PtyManager {
         });
     }
 
-    pub fn screen(&self) -> &vt100::Screen {
+    pub fn screen(&self) -> &vt100_ctt::Screen {
         self.parser.screen()
     }
 
@@ -334,5 +410,7 @@ impl PtyManager {
 impl Drop for PtyManager {
     fn drop(&mut self) {
         self.stop();
+        // Kill the child process (shell)
+        let _ = self.child_killer.kill();
     }
 }
