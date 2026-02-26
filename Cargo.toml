@@ -2,6 +2,7 @@
 name = "huginn"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
 description = "A cognitive terminal multiplexer - your AI copilot for the command line"
 license = "MIT"
 authors = ["Huginn Contributors"]
@@ -36,8 +37,8 @@ shlex = "1.3"
 # PTY (pseudoterminal) support
 portable-pty = "0.8"
 
-# VT100/ANSI parsing
-vt100 = "0.15"
+# VT100/ANSI parsing - using vt100-ctt for better UTF-8 support
+vt100-ctt = "0.17"
 
 # Error handling
 thiserror = "1"
@@ -58,3 +59,9 @@ lto = true           # Link-time optimization
 codegen-units = 1    # Better optimization
 panic = "abort"      # Smaller binary
 strip = true         # Strip symbols
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
