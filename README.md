@@ -23,17 +23,47 @@ Muninn (**Memory**) would be the scrollback buffer - preserving the history of w
 - **Configurable**: JSON-based configuration with native TUI settings screen
 - **Cross-platform**: Works on macOS, Linux, and Windows
 
+## Requirements
+
+- **Rust** 1.75 or later
+- **Cargo** (included with Rust)
+
+Check your version:
+```bash
+rustc --version
+```
+
+Update if needed:
+```bash
+rustup update stable
+```
+
 ## Installation
+
+### From Release (Recommended)
+
+```bash
+curl -sSL https://github.com/slompo/huginn/releases/latest/download/huginn-installer.sh | sh
+```
+
+This installs to `~/.cargo/bin/huginn`.
 
 ### From Source
 
 ```bash
-git clone https://github.com/user/huginn.git
+git clone https://github.com/slompo/huginn.git
 cd huginn
 cargo build --release
 ```
 
 The binary will be at `target/release/huginn`.
+
+### Troubleshooting
+
+If build fails, try:
+```bash
+cargo clean && cargo build --release
+```
 
 ## Usage
 
@@ -174,3 +204,15 @@ The HUD can use an LLM to generate context-aware summaries. Configure your prefe
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
+
+## Releases
+
+Releases are automated via [cargo-dist](https://github.com/axodotdev/cargo-dist). Binaries are available for:
+
+| Platform | Architecture |
+|----------|--------------|
+| macOS | x86_64 (Intel), aarch64 (M1/M2) |
+| Linux | x86_64, aarch64 |
+| Windows | x86_64 |
+
+Download from [GitHub Releases](https://github.com/slompo/huginn/releases).

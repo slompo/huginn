@@ -105,3 +105,48 @@ cargo check
 # Run clippy linter
 cargo clippy
 ```
+
+## Creating a New Release
+
+Releases are automated via cargo-dist and GitHub Actions.
+
+### Step 1: Update version
+
+Edit `Cargo.toml` and update the version:
+```toml
+version = "0.2.0"  # Change from 0.1.1
+```
+
+### Step 2: Commit and tag
+
+```bash
+git add Cargo.toml Cargo.lock
+git commit -m "chore: bump version to 0.2.0"
+git tag v0.2.0
+git push && git push --tags
+```
+
+### Step 3: Wait for CI
+
+GitHub Actions will automatically:
+1. Build binaries for macOS, Linux, Windows
+2. Generate shell installer
+3. Create GitHub Release with all artifacts
+
+### Step 4: Verify
+
+Check the release at:
+```
+https://github.com/slompo/huginn/releases/tag/v0.2.0
+```
+
+### Install script URL format
+
+```
+https://github.com/slompo/huginn/releases/download/v0.2.0/huginn-installer.sh
+```
+
+Or use `latest` for the most recent:
+```
+https://github.com/slompo/huginn/releases/latest/download/huginn-installer.sh
+```
